@@ -1,0 +1,55 @@
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  id-token: write
+
+jobs:
+  review:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: anthropics/claude-code-action@v1
+        env:
+          ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+          ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-sonnet-4-6"
+          ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-4-6"
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4-5"
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+          CLAUDE_CODE_ATTRIBUTION_HEADER: "0"
+        with:
+          track_progress: true
+          anthropic_api_key: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(git log:*),Bash(git show:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+          prompt: |
+            You are reviewing a pull request for `gpt-image-gen` — a FastAPI web app that
+            lets users generate images via the gpt-image-2 model in the browser.
+
+            **Language policy**: PR review comments should be written in Chinese（中文）.
+
+            **Architecture to keep in mind**:
+            - `main.py` is the only backend file; it reads secrets from `.env` via python-dotenv
+            - `static/index.html` is the entire frontend (HTML + CSS + JS, no framework)
+            - API key and base_url must NEVER appear in frontend code or be returned in any response
+            - Image uploads are converted to RGBA PNG by Pillow before being sent to OpenAI
+
+            **Focus your review on**:
+            1. Security: any accidental exposure of OPENAI_API_KEY or OPENAI_BASE_URL to the frontend
+            2. Error handling: unhandled exceptions in the `/api/generate` endpoint
+            3. Correctness: proper branching between `images.edit` (with image) and `images.generate` (text only)
+            4. Frontend JS: race conditions, missing loading state resets, unhandled fetch errors
+
+            **Do NOT comment on**:
+            - Code style (ruff handles that automatically)
+            - Suggestions to add a framework or split files unless there is a concrete bug
+            - Hypothetical future requirements
