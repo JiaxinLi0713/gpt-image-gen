@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GPT Image Generator</title>
+  <style>
+    /* 全局重置：消除浏览器默认 margin/padding，统一 box-sizing */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* ── 设计令牌（Design Tokens）─────────────────────────────────────────────
+       集中管理颜色和圆角，修改主题只需改这里                                    */
+    :root {
+      --bg: #0f0f13;          /* 页面背景：深黑 */
+      --surface: #1a1a24;     /* 卡片背景：略亮 */
+      --border: #2e2e40;      /* 边框：低对比度灰紫 */
+      --accent: #7c6ef7;      /* 主色：紫色，用于按钮/高亮 */
+      --accent-hover: #9585ff;/* 悬停态主色：更亮 */
+      --text: #e8e8f0;        /* 正文：接近白色 */
+      --muted: #7a7a99;       /* 次要文字：低调灰紫 */
+      --danger: #e05c6e;      /* 错误/危险色：红粉 */
+      --radius: 12px;         /* 卡片圆角 */
+    }
+
+    /* ── 页面基础 ──────────────────────────────────────────────────────────── */
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      min-height: 100vh;
+      padding: 24px 16px;
+    }
+
+    /* ── 顶部标题区 ────────────────────────────────────────────────────────── */
+    header {
+      text-align: center;
+      margin-bottom: 32px;
+    }
+    header h1 { font-size: 1.8rem; font-weight: 700; letter-spacing: -0.5px; }
+    header p  { color: var(--muted); margin-top: 6px; font-size: 0.9rem; }
+
+    /* ── 双栏布局：左侧控制面板 420px，右侧结果区自适应 ──────────────────────
+       移动端（< 780px）自动降为单列                                             */
+    .layout {
+      display: grid;
+      grid-template-columns: 420px 1fr;
+      gap: 20px;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+    @media (max-width: 780px) {
+      .layout { grid-template-columns: 1fr; }
+    }
+
+    /* ── 通用卡片容器 ──────────────────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+    }
+
+    /* ── 表单元素通用样式 ──────────────────────────────────────────────────── */
+    label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 6px; }
+
+    textarea {
+      width: 100%;
+      min-height: 120px;
+      resize: vertical;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 0.95rem;
+      padding: 10px 12px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    textarea:focus { border-color: var(--accent); } /* 聚焦时用主色高亮边框 */
+
+    /* 尺寸 + 质量两个下拉框并排 */
+    .row { display: flex; gap: 12px; margin-top: 14px; }
+    .row > * { flex: 1; }
+
+    select {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 0.9rem;
+      padding: 8px 10px;
+      outline: none;
+      cursor: pointer;
+    }
+
+    /* ── 图片上传区域（支持点击和拖拽）────────────────────────────────────────
+       真实的 <input type=file> 用 opacity:0 覆盖整个区域，
+       视觉上只显示虚线框提示文字                                                */
+    .upload-area {
+      margin-top: 14px;
+      border: 2px dashed var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      position: relative;
+    }
+    .upload-area:hover, .upload-area.drag { border-color: var(--accent); background: rgba(124,110,247,0.05); }
+    .upload-area input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+    .upload-area .hint { color: var(--muted); font-size: 0.85rem; }
+    .upload-area .hint span { color: var(--accent); }
+
+    /* ── 上传后的图片预览区 ────────────────────────────────────────────────── */
+    #preview-wrap { margin-top: 10px; display: none; } /* 无图片时隐藏 */
+    #preview-wrap img { width: 100%; border-radius: 8px; border: 1px solid var(--border); }
+    #clear-img {
+      margin-top: 6px;
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--muted);
+      font-size: 0.8rem;
+      padding: 4px 10px;
+      cursor: pointer;
+      width: 100%;
+    }
+    #clear-img:hover { border-color: var(--danger); color: var(--danger); }
+
+    /* ── 生成按钮 ──────────────────────────────────────────────────────────── */
+    #generate-btn {
+      margin-top: 18px;
+      width: 100%;
+      padding: 12px;
+      background: var(--accent);
+      border: none;
+      border-radius: 8px;
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, opacity 0.2s;
+    }
+    #generate-btn:hover:not(:disabled) { background: var(--accent-hover); }
+    #generate-btn:disabled { opacity: 0.5; cursor: not-allowed; } /* 请求期间禁用 */
+
+    /* ── 结果卡片：内容居中，最小高度保持布局稳定 ──────────────────────────── */
+    .result-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 400px;
+    }
+
+    /* 初始占位图标（未生成时显示） */
+    .placeholder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      color: var(--muted);
+    }
+    .placeholder svg { opacity: 0.3; }
+
+    #result-img { width: 100%; border-radius: 8px; display: none; } /* 生成后才显示 */
+
+    /* ── 下载按钮（生成后才显示）──────────────────────────────────────────── */
+    #download-btn {
+      margin-top: 14px;
+      padding: 9px 22px;
+      background: none;
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      color: var(--accent);
+      font-size: 0.9rem;
+      cursor: pointer;
+      display: none;
+      transition: background 0.2s, color 0.2s;
+    }
+    #download-btn:hover { background: var(--accent); color: #fff; }
+
+    /* ── 加载动画（请求期间显示）──────────────────────────────────────────── */
+    .spinner {
+      width: 36px; height: 36px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent); /* 只有顶部边是主色，形成旋转视觉 */
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      display: none;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── 错误提示（仅在出错时显示）────────────────────────────────────────── */
+    #error-msg {
+      margin-top: 12px;
+      padding: 10px 14px;
+      background: rgba(224,92,110,0.1);
+      border: 1px solid rgba(224,92,110,0.3);
+      border-radius: 8px;
+      color: var(--danger);
+      font-size: 0.85rem;
+      display: none;
+      word-break: break-word; /* 防止长错误信息溢出容器 */
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ── 页眉 ──────────────────────────────────────────────────────────────── -->
+  <header>
+    <h1>GPT Image Generator</h1>
+    <p>基于 gpt-image-2 的多模态图像生成 — 文本生图 / 图片+文本再创作</p>
+  </header>
+
+  <div class="layout">
+
+    <!-- ── 左栏：用户输入控制面板 ─────────────────────────────────────────── -->
+    <div class="card">
+
+      <!-- 提示词输入框 -->
+      <label for="prompt">提示词 Prompt</label>
+      <textarea id="prompt" placeholder="描述你想生成的图像，例如：一只赛博朋克风格的猫咪坐在霓虹灯下…"></textarea>
+
+      <!-- 尺寸 & 质量选择（横向并排） -->
+      <div class="row">
+        <div>
+          <label for="size">尺寸</label>
+          <select id="size">
+            <option value="1024x1024">1024 × 1024</option>
+            <option value="1024x1536">1024 × 1536（竖）</option>
+            <option value="1536x1024">1536 × 1024（横）</option>
+          </select>
+        </div>
+        <div>
+          <label for="quality">质量</label>
+          <!-- quality 参数仅在纯文本生图（images.generate）时有效，edit 接口会忽略它 -->
+          <select id="quality">
+            <option value="medium">medium</option>
+            <option value="low">low（快）</option>
+            <option value="high">high（精）</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- 图片上传区：<input> 透明覆盖整块区域，同时支持拖拽（由 JS 处理） -->
+      <div class="upload-area" id="upload-area">
+        <input type="file" id="img-input" accept="image/*" />
+        <p class="hint">可选：上传参考图片（<span>多模态生图</span>）</p>
+        <p class="hint" style="margin-top:4px;font-size:0.78rem;">拖拽或点击上传</p>
+      </div>
+
+      <!-- 上传后显示预览图和移除按钮（初始隐藏） -->
+      <div id="preview-wrap">
+        <img id="img-preview" src="" alt="预览" />
+        <button id="clear-img">✕ 移除图片，改用纯文本生图</button>
+      </div>
+
+      <!-- 触发生图请求的主操作按钮 -->
+      <button id="generate-btn">生成图像</button>
+
+      <!-- 错误信息展示区（初始隐藏，出错时通过 JS 显示） -->
+      <div id="error-msg"></div>
+    </div>
+
+    <!-- ── 右栏：生成结果展示区 ───────────────────────────────────────────── -->
+    <div class="card result-card">
+
+      <!-- 未生成时的占位提示 -->
+      <div class="placeholder" id="placeholder">
+        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
+          <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+          <polyline points="21 15 16 10 5 21"/>
+        </svg>
+        <span>生成结果将显示在这里</span>
+      </div>
+
+      <!-- 请求进行中的旋转加载动画（初始隐藏） -->
+      <div class="spinner" id="spinner"></div>
+
+      <!-- 生成的图片（初始隐藏，收到响应后显示） -->
+      <img id="result-img" src="" alt="生成结果" />
+
+      <!-- 下载按钮：b64 响应触发本地下载，URL 响应则新标签页打开 -->
+      <button id="download-btn">下载图片</button>
+    </div>
+
+  </div><!-- /.layout -->
+
+  <script>
+    // ── DOM 元素引用 ──────────────────────────────────────────────────────────
+    // 集中在顶部获取，避免在事件回调里重复查询 DOM
+    const promptEl   = document.getElementById("prompt");
+    const sizeEl     = document.getElementById("size");
+    const qualityEl  = document.getElementById("quality");
+    const imgInput   = document.getElementById("img-input");
+    const uploadArea = document.getElementById("upload-area");
+    const previewWrap= document.getElementById("preview-wrap");
+    const imgPreview = document.getElementById("img-preview");
+    const clearBtn   = document.getElementById("clear-img");
+    const genBtn     = document.getElementById("generate-btn");
+    const errMsg     = document.getElementById("error-msg");
+    const placeholder= document.getElementById("placeholder");
+    const spinner    = document.getElementById("spinner");
+    const resultImg  = document.getElementById("result-img");
+    const dlBtn      = document.getElementById("download-btn");
+
+    // ── 图片上传：选择文件后即时预览 ─────────────────────────────────────────
+    imgInput.addEventListener("change", () => {
+      const file = imgInput.files[0];
+      if (!file) return;
+      // createObjectURL 生成本地临时 URL，无需上传即可预览
+      imgPreview.src = URL.createObjectURL(file);
+      previewWrap.style.display = "block";
+    });
+
+    // ── 移除已上传的图片，切换回纯文本生图模式 ───────────────────────────────
+    clearBtn.addEventListener("click", () => {
+      imgInput.value = "";   // 清空 input，否则再次选同一文件不会触发 change
+      imgPreview.src = "";
+      previewWrap.style.display = "none";
+    });
+
+    // ── 拖拽上传支持 ──────────────────────────────────────────────────────────
+    // dragover 必须阻止默认行为，否则 drop 事件不会触发
+    uploadArea.addEventListener("dragover", e => {
+      e.preventDefault();
+      uploadArea.classList.add("drag"); // 添加高亮样式给用户视觉反馈
+    });
+    uploadArea.addEventListener("dragleave", () => uploadArea.classList.remove("drag"));
+    uploadArea.addEventListener("drop", e => {
+      e.preventDefault();
+      uploadArea.classList.remove("drag");
+      const file = e.dataTransfer.files[0];
+      if (file && file.type.startsWith("image/")) {
+        // 将拖入的文件注入 <input>，复用 change 事件里的预览逻辑
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        imgInput.files = dt.files;
+        imgInput.dispatchEvent(new Event("change"));
+      }
+    });
+
+    // ── 生成按钮：核心交互逻辑 ───────────────────────────────────────────────
+    genBtn.addEventListener("click", async () => {
+      const prompt = promptEl.value.trim();
+      if (!prompt) { showError("请输入提示词"); return; }
+
+      setLoading(true);
+      hideError();
+
+      // 用 FormData 发送 multipart/form-data，后端 FastAPI 用 Form() / File() 接收
+      const fd = new FormData();
+      fd.append("prompt", prompt);
+      fd.append("size", sizeEl.value);
+      fd.append("quality", qualityEl.value);
+      if (imgInput.files[0]) fd.append("image", imgInput.files[0]); // 无图片时不附加字段
+
+      try {
+        const res = await fetch("/api/generate", { method: "POST", body: fd });
+        const data = await res.json();
+
+        if (!res.ok) {
+          // HTTP 4xx/5xx：后端返回的 detail 字段包含具体错误原因
+          showError(data.detail || "请求失败");
+          return;
+        }
+
+        if (data.image) {
+          // 常规路径：base64 数据直接构造 data URI 赋给 <img>
+          const src = "data:image/png;base64," + data.image;
+          resultImg.src = src;
+          // 绑定下载行为：用隐藏的 <a> 触发浏览器下载
+          dlBtn.onclick = () => downloadImage(src);
+        } else if (data.url) {
+          // 备用路径：模型返回临时 URL，直接显示；下载退化为新标签页打开
+          resultImg.src = data.url;
+          dlBtn.onclick = () => window.open(data.url, "_blank");
+        }
+
+        // 切换到结果显示状态
+        placeholder.style.display = "none";
+        resultImg.style.display = "block";
+        dlBtn.style.display = "inline-block";
+
+      } catch (e) {
+        // fetch 本身抛异常（网络断开、CORS 等）
+        showError("网络错误：" + e.message);
+      } finally {
+        setLoading(false); // 无论成功失败都恢复按钮可用状态
+      }
+    });
+
+    // ── 辅助函数 ──────────────────────────────────────────────────────────────
+
+    // 创建隐藏的 <a> 并模拟点击，触发浏览器将 base64 图片保存为文件
+    function downloadImage(dataUrl) {
+      const a = document.createElement("a");
+      a.href = dataUrl;
+      a.download = "gpt-image-" + Date.now() + ".png"; // 以时间戳避免重名
+      a.click();
+    }
+
+    // 请求进行中：禁用按钮、显示 spinner；请求结束后恢复
+    function setLoading(on) {
+      genBtn.disabled = on;
+      genBtn.textContent = on ? "生成中…" : "生成图像";
+      spinner.style.display = on ? "block" : "none";
+      if (on) {
+        // 开始新请求时隐藏上次结果，避免视觉上的旧图残留
+        resultImg.style.display = "none";
+        dlBtn.style.display = "none";
+        placeholder.style.display = "none";
+      }
+    }
+
+    // 错误信息展示 / 清除
+    function showError(msg) { errMsg.textContent = msg; errMsg.style.display = "block"; }
+    function hideError()    { errMsg.style.display = "none"; }
+  </script>
+</body>
+</html>
