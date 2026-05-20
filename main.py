@@ -29,19 +29,23 @@ async def generate_image(
     prompt: str = Form(...),
     size: str = Form("1024x1024"),
     quality: str = Form("medium"),
-    image: UploadFile | None = File(None),
+    images: list[UploadFile] = File(default=[]),
 ):
     try:
-        if image and image.filename:
-            raw = await image.read()
-            img = Image.open(io.BytesIO(raw)).convert("RGBA")
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            buf.seek(0)
+        valid = [img for img in images if img.filename]
+        if valid:
+            image_files = []
+            for img in valid:
+                raw = await img.read()
+                pil = Image.open(io.BytesIO(raw)).convert("RGBA")
+                buf = io.BytesIO()
+                pil.save(buf, format="PNG")
+                buf.seek(0)
+                image_files.append((img.filename or "input.png", buf, "image/png"))
 
             response = client.images.edit(
                 model="gpt-image-2",
-                image=("input.png", buf, "image/png"),
+                image=image_files[0] if len(image_files) == 1 else image_files,
                 prompt=prompt,
                 n=1,
                 size=size,
