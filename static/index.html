@@ -94,9 +94,7 @@
       cursor: pointer;
     }
 
-    /* ── 图片上传区域（支持点击和拖拽）────────────────────────────────────────
-       真实的 <input type=file> 用 opacity:0 覆盖整个区域，
-       视觉上只显示虚线框提示文字                                                */
+    /* ── 图片上传区域（支持点击和拖拽）────────────────────────────────────────*/
     .upload-area {
       margin-top: 14px;
       border: 2px dashed var(--border);
@@ -112,11 +110,41 @@
     .upload-area .hint { color: var(--muted); font-size: 0.85rem; }
     .upload-area .hint span { color: var(--accent); }
 
-    /* ── 上传后的图片预览区 ────────────────────────────────────────────────── */
-    #preview-wrap { margin-top: 10px; display: none; } /* 无图片时隐藏 */
-    #preview-wrap img { width: 100%; border-radius: 8px; border: 1px solid var(--border); }
+    /* ── 多图预览区 ─────────────────────────────────────────────────────────── */
+    #preview-wrap { margin-top: 10px; display: none; }
+    .preview-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+    .preview-item {
+      position: relative;
+      width: 76px;
+      height: 76px;
+      flex-shrink: 0;
+    }
+    .preview-item img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+    }
+    .preview-item .rm {
+      position: absolute;
+      top: -5px;
+      right: -5px;
+      width: 18px;
+      height: 18px;
+      background: var(--danger);
+      border: none;
+      border-radius: 50%;
+      color: #fff;
+      font-size: 10px;
+      line-height: 1;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
     #clear-img {
-      margin-top: 6px;
+      margin-top: 8px;
       background: none;
       border: 1px solid var(--border);
       border-radius: 6px;
@@ -212,6 +240,10 @@
   <header>
     <h1>GPT Image Generator</h1>
     <p>基于 gpt-image-2 的多模态图像生成 — 文本生图 / 图片+文本再创作</p>
+    <a href="https://github.com/JiaxinLi0713/gpt-image-gen" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;margin-top:10px;color:var(--muted);font-size:0.85rem;text-decoration:none;transition:color 0.2s;" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--muted)'">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+      JiaxinLi0713/gpt-image-gen
+    </a>
   </header>
 
   <div class="layout">
@@ -244,17 +276,17 @@
         </div>
       </div>
 
-      <!-- 图片上传区：<input> 透明覆盖整块区域，同时支持拖拽（由 JS 处理） -->
+      <!-- 图片上传区：支持多张图片，点击或拖拽 -->
       <div class="upload-area" id="upload-area">
-        <input type="file" id="img-input" accept="image/*" />
-        <p class="hint">可选：上传参考图片（<span>多模态生图</span>）</p>
+        <input type="file" id="img-input" accept="image/*" multiple />
+        <p class="hint">可选：上传参考图片（<span>支持多张</span>）</p>
         <p class="hint" style="margin-top:4px;font-size:0.78rem;">拖拽或点击上传</p>
       </div>
 
-      <!-- 上传后显示预览图和移除按钮（初始隐藏） -->
+      <!-- 多图预览网格（初始隐藏） -->
       <div id="preview-wrap">
-        <img id="img-preview" src="" alt="预览" />
-        <button id="clear-img">✕ 移除图片，改用纯文本生图</button>
+        <div class="preview-grid" id="preview-grid"></div>
+        <button id="clear-img">✕ 清除所有图片，改用纯文本生图</button>
       </div>
 
       <!-- 触发生图请求的主操作按钮 -->
@@ -290,14 +322,13 @@
 
   <script>
     // ── DOM 元素引用 ──────────────────────────────────────────────────────────
-    // 集中在顶部获取，避免在事件回调里重复查询 DOM
     const promptEl   = document.getElementById("prompt");
     const sizeEl     = document.getElementById("size");
     const qualityEl  = document.getElementById("quality");
     const imgInput   = document.getElementById("img-input");
     const uploadArea = document.getElementById("upload-area");
     const previewWrap= document.getElementById("preview-wrap");
-    const imgPreview = document.getElementById("img-preview");
+    const previewGrid= document.getElementById("preview-grid");
     const clearBtn   = document.getElementById("clear-img");
     const genBtn     = document.getElementById("generate-btn");
     const errMsg     = document.getElementById("error-msg");
@@ -306,43 +337,68 @@
     const resultImg  = document.getElementById("result-img");
     const dlBtn      = document.getElementById("download-btn");
 
-    // ── 图片上传：选择文件后即时预览 ─────────────────────────────────────────
+    // ── 已选图片列表 ──────────────────────────────────────────────────────────
+    let selectedFiles = [];
+
+    function renderPreviews() {
+      previewGrid.innerHTML = "";
+      selectedFiles.forEach((file, idx) => {
+        const item = document.createElement("div");
+        item.className = "preview-item";
+
+        const img = document.createElement("img");
+        img.src = URL.createObjectURL(file);
+        img.alt = file.name;
+
+        const btn = document.createElement("button");
+        btn.className = "rm";
+        btn.textContent = "✕";
+        btn.title = "移除此图片";
+        btn.addEventListener("click", () => {
+          URL.revokeObjectURL(img.src);
+          selectedFiles.splice(idx, 1);
+          renderPreviews();
+        });
+
+        item.append(img, btn);
+        previewGrid.appendChild(item);
+      });
+      previewWrap.style.display = selectedFiles.length > 0 ? "block" : "none";
+    }
+
+    function addFiles(fileList) {
+      for (const file of fileList) {
+        if (file.type.startsWith("image/")) selectedFiles.push(file);
+      }
+      renderPreviews();
+    }
+
+    // ── 文件选择 ──────────────────────────────────────────────────────────────
     imgInput.addEventListener("change", () => {
-      const file = imgInput.files[0];
-      if (!file) return;
-      // createObjectURL 生成本地临时 URL，无需上传即可预览
-      imgPreview.src = URL.createObjectURL(file);
-      previewWrap.style.display = "block";
+      addFiles(imgInput.files);
+      imgInput.value = ""; // 重置，允许再次选同一文件
     });
 
-    // ── 移除已上传的图片，切换回纯文本生图模式 ───────────────────────────────
+    // ── 清除全部 ──────────────────────────────────────────────────────────────
     clearBtn.addEventListener("click", () => {
-      imgInput.value = "";   // 清空 input，否则再次选同一文件不会触发 change
-      imgPreview.src = "";
-      previewWrap.style.display = "none";
+      selectedFiles = [];
+      imgInput.value = "";
+      renderPreviews();
     });
 
-    // ── 拖拽上传支持 ──────────────────────────────────────────────────────────
-    // dragover 必须阻止默认行为，否则 drop 事件不会触发
+    // ── 拖拽上传 ──────────────────────────────────────────────────────────────
     uploadArea.addEventListener("dragover", e => {
       e.preventDefault();
-      uploadArea.classList.add("drag"); // 添加高亮样式给用户视觉反馈
+      uploadArea.classList.add("drag");
     });
     uploadArea.addEventListener("dragleave", () => uploadArea.classList.remove("drag"));
     uploadArea.addEventListener("drop", e => {
       e.preventDefault();
       uploadArea.classList.remove("drag");
-      const file = e.dataTransfer.files[0];
-      if (file && file.type.startsWith("image/")) {
-        // 将拖入的文件注入 <input>，复用 change 事件里的预览逻辑
-        const dt = new DataTransfer();
-        dt.items.add(file);
-        imgInput.files = dt.files;
-        imgInput.dispatchEvent(new Event("change"));
-      }
+      addFiles(e.dataTransfer.files);
     });
 
-    // ── 生成按钮：核心交互逻辑 ───────────────────────────────────────────────
+    // ── 生成按钮 ──────────────────────────────────────────────────────────────
     genBtn.addEventListener("click", async () => {
       const prompt = promptEl.value.trim();
       if (!prompt) { showError("请输入提示词"); return; }
@@ -350,72 +406,57 @@
       setLoading(true);
       hideError();
 
-      // 用 FormData 发送 multipart/form-data，后端 FastAPI 用 Form() / File() 接收
       const fd = new FormData();
       fd.append("prompt", prompt);
       fd.append("size", sizeEl.value);
       fd.append("quality", qualityEl.value);
-      if (imgInput.files[0]) fd.append("image", imgInput.files[0]); // 无图片时不附加字段
+      for (const file of selectedFiles) fd.append("images", file);
 
       try {
         const res = await fetch("/api/generate", { method: "POST", body: fd });
         const data = await res.json();
 
-        if (!res.ok) {
-          // HTTP 4xx/5xx：后端返回的 detail 字段包含具体错误原因
-          showError(data.detail || "请求失败");
-          return;
-        }
+        if (!res.ok) { showError(data.detail || "请求失败"); return; }
 
         if (data.image) {
-          // 常规路径：base64 数据直接构造 data URI 赋给 <img>
           const src = "data:image/png;base64," + data.image;
           resultImg.src = src;
-          // 绑定下载行为：用隐藏的 <a> 触发浏览器下载
           dlBtn.onclick = () => downloadImage(src);
         } else if (data.url) {
-          // 备用路径：模型返回临时 URL，直接显示；下载退化为新标签页打开
           resultImg.src = data.url;
           dlBtn.onclick = () => window.open(data.url, "_blank");
         }
 
-        // 切换到结果显示状态
         placeholder.style.display = "none";
         resultImg.style.display = "block";
         dlBtn.style.display = "inline-block";
 
       } catch (e) {
-        // fetch 本身抛异常（网络断开、CORS 等）
         showError("网络错误：" + e.message);
       } finally {
-        setLoading(false); // 无论成功失败都恢复按钮可用状态
+        setLoading(false);
       }
     });
 
     // ── 辅助函数 ──────────────────────────────────────────────────────────────
-
-    // 创建隐藏的 <a> 并模拟点击，触发浏览器将 base64 图片保存为文件
     function downloadImage(dataUrl) {
       const a = document.createElement("a");
       a.href = dataUrl;
-      a.download = "gpt-image-" + Date.now() + ".png"; // 以时间戳避免重名
+      a.download = "gpt-image-" + Date.now() + ".png";
       a.click();
     }
 
-    // 请求进行中：禁用按钮、显示 spinner；请求结束后恢复
     function setLoading(on) {
       genBtn.disabled = on;
       genBtn.textContent = on ? "生成中…" : "生成图像";
       spinner.style.display = on ? "block" : "none";
       if (on) {
-        // 开始新请求时隐藏上次结果，避免视觉上的旧图残留
         resultImg.style.display = "none";
         dlBtn.style.display = "none";
         placeholder.style.display = "none";
       }
     }
 
-    // 错误信息展示 / 清除
     function showError(msg) { errMsg.textContent = msg; errMsg.style.display = "block"; }
     function hideError()    { errMsg.style.display = "none"; }
   </script>
